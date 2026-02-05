@@ -2,9 +2,13 @@
 
 # 默认值
 INSTANCES_FILE="instance_set/instances_hard.txt"
-LLM_CONFIG=".llm_config/openrouter_opus.json"
+LLM_CONFIG=".llm_config/openrouter.json"
 DATASET_NAME="princeton-nlp/SWE-bench_Verified"
 SPLIT="test"
+BUILD_ONLY=0
+
+INSTANCES_FILE="instances_hard.txt"
+LLM_CONFIG=".llm_config/openrouter.json"
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -21,13 +25,18 @@ while [[ $# -gt 0 ]]; do
             DATASET_NAME="$2"
             shift 2
             ;;
+        -b|--build-only)
+            BUILD_ONLY=1
+            shift
+            ;;
         -h|--help)
             echo "用法: $0 [选项]"
             echo ""
             echo "选项:"
-            echo "  -i, --instances <文件>    指定测试集文件 (默认: instance_set/instances_hard.txt)"
-            echo "  -l, --llm-config <文件>   指定LLM配置文件 (默认: .llm_config/openrouter.json)"
+            echo "  -i, --instances <文件>    指定测试集文件 (默认: instance_set/instances_hard.txt；若不存在则回退 instances_hard.txt)"
+            echo "  -l, --llm-config <文件>   指定LLM配置文件 (默认: 若存在 .llm_config/openrouter_opus.json 则优先，否则 .llm_config/openrouter.json)"
             echo "  -d, --dataset <名称>      指定数据集名称 (默认: princeton-nlp/SWE-bench_Verified)"
+            echo "  -b, --build-only          仅构建 Docker 镜像，不跑推理与评测 (省 token)"
             echo "  -h, --help                显示帮助信息"
             exit 0
             ;;
@@ -39,21 +48,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# 从 LLM 配置文件中提取 model 字段
-if ! command -v jq &> /dev/null; then
-    echo "错误: 需要安装 jq 来解析 JSON 配置文件"
-    exit 1
-fi
+# 非仅构建模式时才校验 LLM 配置
+if [[ $BUILD_ONLY -eq 0 ]]; then
+    if ! command -v jq &> /dev/null; then
+        echo "错误: 需要安装 jq 来解析 JSON 配置文件"
+        exit 1
+    fi
 
-if [[ ! -f "$LLM_CONFIG" ]]; then
-    echo "错误: 找不到 LLM 配置文件: $LLM_CONFIG"
-    exit 1
-fi
+    if [[ ! -f "$LLM_CONFIG" ]]; then
+        echo "错误: 找不到 LLM 配置文件: $LLM_CONFIG"
+        exit 1
+    fi
 
-MODEL=$(jq -r '.model' "$LLM_CONFIG")
-if [[ -z "$MODEL" || "$MODEL" == "null" ]]; then
-    echo "错误: 无法从配置文件中读取 model 字段"
-    exit 1
+    MODEL=$(jq -r '.model' "$LLM_CONFIG")
+    if [[ -z "$MODEL" || "$MODEL" == "null" ]]; then
+        echo "错误: 无法从配置文件中读取 model 字段"
+        exit 1
+    fi
+else
+    MODEL=""
 fi
 
 # 动态获取 SDK submodule 的 short SHA（与 Python 代码中的 SDK_SHORT_SHA 保持一致）
@@ -70,20 +83,26 @@ MODEL_PATH_SUFFIX="${MODEL}_sdk_${SDK_SHORT_SHA}_maxiter_200_N_initial"
 INSTANCES_SUBDIR=$(basename "$INSTANCES_FILE" .txt)
 
 echo "使用测试集: $INSTANCES_FILE"
-echo "使用LLM配置: $LLM_CONFIG"
 echo "使用数据集: $DATASET_NAME"
-echo "模型: $MODEL"
+if [[ $BUILD_ONLY -eq 0 ]]; then
+    echo "使用LLM配置: $LLM_CONFIG"
+    echo "模型: $MODEL"
+fi
 echo "输出子目录: $INSTANCES_SUBDIR"
+[[ $BUILD_ONLY -eq 1 ]] && echo "仅构建镜像 (--build-only)，不运行推理与评测"
 
 uv run benchmarks/swebench/build_images.py \
   --dataset "$DATASET_NAME" \
-  --split test \
+  --split "$SPLIT" \
   --image ghcr.io/openhands/eval-agent-server \
   --target source-minimal \
   --num-workers 5 \
   --select "$INSTANCES_FILE" \
   --n-limit 100
-# # Run with fuzz_hypo tool enabled
+
+[[ $BUILD_ONLY -eq 1 ]] && echo "Docker 镜像构建完成，已退出。" && exit 0
+
+# Run with fuzz_hypo tool enabled
 # uv run swebench-infer "$LLM_CONFIG" \
 #     --select "$INSTANCES_FILE" \
 #     --workspace docker \
