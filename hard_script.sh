@@ -1,14 +1,52 @@
 #!/bin/bash
 
+
+# NOTE: use socks5:// (httpx does not accept socks://)
+export ALL_PROXY="socks5://127.0.0.1:7897/"
+export all_proxy="socks5://127.0.0.1:7897/"
+
 # 默认值
-INSTANCES_FILE="instance_set/instances_hard.txt"
-LLM_CONFIG=".llm_config/openrouter.json"
 DATASET_NAME="princeton-nlp/SWE-bench_Verified"
 SPLIT="test"
 BUILD_ONLY=0
 
-INSTANCES_FILE="instances_hard.txt"
-LLM_CONFIG=".llm_config/openrouter.json"
+# 默认 instances 文件优先级：
+# 1) instance_set/instances_hard.txt (新路径)
+# 2) instances_hard.txt (旧路径)
+# 3) instances_hard_1case.txt (单例调试)
+if [[ -f "instance_set/instances_hard.txt" ]]; then
+    INSTANCES_FILE="instance_set/instances_hard.txt"
+elif [[ -f "instances_hard.txt" ]]; then
+    INSTANCES_FILE="instances_hard.txt"
+elif [[ -f "instances_hard_1case.txt" ]]; then
+    INSTANCES_FILE="instances_hard_1case.txt"
+else
+    INSTANCES_FILE="instance_set/instances_hard.txt"
+fi
+
+# 默认 LLM 配置优先级：有 opus 则优先，否则 fallback
+if [[ -f ".llm_config/openrouter_opus.json" ]]; then
+    LLM_CONFIG=".llm_config/openrouter_opus.json"
+else
+    LLM_CONFIG=".llm_config/openrouter.json"
+fi
+
+# 推理通用参数（与下方各模式共用）
+MAX_ATTEMPTS=3
+MAX_ITERATIONS=200
+MAX_RETRIES=1
+NUM_WORKERS=5
+N_LIMIT=100
+
+# 输出目录根路径
+OUTPUT_BASE="./evaluation_results"
+
+# 运行开关（保持双方功能；默认只跑 baseline + hypothesis，其他需要手动打开）
+RUN_BASELINE="${RUN_BASELINE:-1}"
+RUN_HYPOTHESIS="${RUN_HYPOTHESIS:-1}"
+RUN_INSTALL_PROMPT="${RUN_INSTALL_PROMPT:-0}"
+RUN_FUZZ_HYPO_FINAL_AUG="${RUN_FUZZ_HYPO_FINAL_AUG:-0}"
+RUN_SUBAGENT_FUZZ="${RUN_SUBAGENT_FUZZ:-0}"
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -96,9 +134,9 @@ uv run benchmarks/swebench/build_images.py \
   --split "$SPLIT" \
   --image ghcr.io/openhands/eval-agent-server \
   --target source-minimal \
-  --num-workers 5 \
+  --num-workers "$NUM_WORKERS" \
   --select "$INSTANCES_FILE" \
-  --n-limit 100
+  --n-limit "$N_LIMIT"
 
 [[ $BUILD_ONLY -eq 1 ]] && echo "Docker 镜像构建完成，已退出。" && exit 0
 
@@ -124,104 +162,105 @@ uv run benchmarks/swebench/build_images.py \
 # After saving, restart your terminal for changes to take effect
 
 
-# Run with fuzz_hypo tool enabled, and install before fixing prompt
-# uv run swebench-infer "$LLM_CONFIG" \
-#     --select "$INSTANCES_FILE" \
-#     --workspace docker \
-#     --output-dir "./evaluation_results/eval_outputs_fuzz_hypo_final_aug/${INSTANCES_SUBDIR}" \
-#     --max-attempts 3 \
-#     --max-iterations 200 \
-#     --max-retries 1 \
-#     --num-workers 5 \
-#     --extra-tools fuzz_hypo \
-#     --prompt-path benchmarks/swebench/prompts/fuzz_final_only_aug.j2 \
-#     --n-limit 100
+run_eval() {
+    local out_dir="$1"
+    uv run swebench-eval "${out_dir}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/output.jsonl" \
+      --dataset "$DATASET_NAME" \
+      --output-file "${out_dir}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/results.swebench.jsonl" \
+      --workers "$NUM_WORKERS"
+}
 
-# uv run swebench-eval "./evaluation_results/eval_outputs_fuzz_hypo_final_aug/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/output.jsonl" \
-#   --dataset "$DATASET_NAME" \
-#   --output-file "./evaluation_results/eval_outputs_fuzz_hypo_final_aug/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/results.swebench.jsonl" \
-#   --workers 5
+# 输出目录（统一由 OUTPUT_BASE 控制；想用旧风格则 OUTPUT_BASE="."）
+BASELINE_OUT="${OUTPUT_BASE}/eval_outputs/${INSTANCES_SUBDIR}"
+HYPOTHESIS_OUT="${OUTPUT_BASE}/eval_outputs_hypothesis_100/${INSTANCES_SUBDIR}"
+INSTALL_OUT="${OUTPUT_BASE}/eval_outputs_aug/${INSTANCES_SUBDIR}"
+FUZZ_FINAL_AUG_OUT="${OUTPUT_BASE}/eval_outputs_fuzz_hypo_final_aug/${INSTANCES_SUBDIR}"
+SUBFUZZ_OUT="${OUTPUT_BASE}/eval_outputs_subfuzz/${INSTANCES_SUBDIR}"
 
-# Baseline
-uv run swebench-infer "$LLM_CONFIG" \
-    --select "$INSTANCES_FILE" \
-    --workspace docker \
-    --output-dir "./evaluation_results/eval_outputs/${INSTANCES_SUBDIR}" \
-    --max-attempts 3 \
-    --max-iterations 200 \
-    --max-retries 1 \
-    --num-workers 5 \
-    --prompt-path benchmarks/swebench/prompts/default.j2 \
-    --n-limit 100
+# Run with fuzz_hypo tool enabled, and install before fixing prompt (final aug)
+if [[ "$RUN_FUZZ_HYPO_FINAL_AUG" == "1" ]]; then
+    uv run swebench-infer "$LLM_CONFIG" \
+        --select "$INSTANCES_FILE" \
+        --workspace docker \
+        --output-dir "$FUZZ_FINAL_AUG_OUT" \
+        --max-attempts "$MAX_ATTEMPTS" \
+        --max-iterations "$MAX_ITERATIONS" \
+        --max-retries "$MAX_RETRIES" \
+        --num-workers "$NUM_WORKERS" \
+        --extra-tools fuzz_hypo \
+        --prompt-path benchmarks/swebench/prompts/fuzz_final_only_aug.j2 \
+        --n-limit "$N_LIMIT"
+    run_eval "$FUZZ_FINAL_AUG_OUT"
+fi
 
-uv run swebench-eval "./evaluation_results/eval_outputs/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/output.jsonl" \
-  --dataset "$DATASET_NAME" \
-  --output-file "./evaluation_results/eval_outputs/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/results.swebench.jsonl" \
-  --workers 5
+# Baseline (default prompt, no extra tools)
+if [[ "$RUN_BASELINE" == "1" ]]; then
+    uv run swebench-infer "$LLM_CONFIG" \
+        --select "$INSTANCES_FILE" \
+        --workspace docker \
+        --output-dir "$BASELINE_OUT" \
+        --max-attempts "$MAX_ATTEMPTS" \
+        --max-iterations "$MAX_ITERATIONS" \
+        --max-retries "$MAX_RETRIES" \
+        --num-workers "$NUM_WORKERS" \
+        --n-limit "$N_LIMIT"
+    run_eval "$BASELINE_OUT"
+fi
 
+# Run with hypothesis prompt (no extra tools)
+if [[ "$RUN_HYPOTHESIS" == "1" ]]; then
+    uv run swebench-infer "$LLM_CONFIG" \
+        --select "$INSTANCES_FILE" \
+        --workspace docker \
+        --output-dir "$HYPOTHESIS_OUT" \
+        --max-attempts "$MAX_ATTEMPTS" \
+        --max-iterations "$MAX_ITERATIONS" \
+        --max-retries "$MAX_RETRIES" \
+        --num-workers "$NUM_WORKERS" \
+        --prompt-path benchmarks/swebench/prompts/hypothesis_default.j2 \
+        --n-limit "$N_LIMIT"
+    run_eval "$HYPOTHESIS_OUT"
+fi
 
-# # Run with install before fixing prompt
-uv run swebench-infer "$LLM_CONFIG" \
-    --select "$INSTANCES_FILE" \
-    --workspace docker \
-    --output-dir "./evaluation_results/eval_outputs_aug/${INSTANCES_SUBDIR}" \
-    --max-attempts 3 \
-    --max-iterations 200 \
-    --max-retries 1 \
-    --num-workers 5 \
-    --prompt-path benchmarks/swebench/prompts/default_install.j2 \
-    --n-limit 100
-
-uv run swebench-eval "./evaluation_results/eval_outputs_aug/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/output.jsonl" \
-  --dataset "$DATASET_NAME" \
-  --output-file "./evaluation_results/eval_outputs_aug/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/results.swebench.jsonl" \
-  --workers 5
-
-# run with augmented prompt
-# uv run swebench-infer "$LLM_CONFIG" \
-#     --select "$INSTANCES_FILE" \
-#     --workspace docker \
-#     --output-dir "./evaluation_results/eval_outputs_0209/${INSTANCES_SUBDIR}" \
-#     --max-attempts 3 \
-#     --max-iterations 200 \
-#     --max-retries 1 \
-#     --num-workers 5 \
-#     --prompt-path benchmarks/swebench/prompts/default_aug_2.j2 \
-#     --n-limit 100
-
-# uv run swebench-eval "./evaluation_results/eval_outputs_0209/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/output.jsonl" \
-#   --dataset "$DATASET_NAME" \
-#   --output-file "./evaluation_results/eval_outputs_0209/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/results.swebench.jsonl" \
-#   --workers 5
+# Run with install before fixing prompt
+if [[ "$RUN_INSTALL_PROMPT" == "1" ]]; then
+    uv run swebench-infer "$LLM_CONFIG" \
+        --select "$INSTANCES_FILE" \
+        --workspace docker \
+        --output-dir "$INSTALL_OUT" \
+        --max-attempts "$MAX_ATTEMPTS" \
+        --max-iterations "$MAX_ITERATIONS" \
+        --max-retries "$MAX_RETRIES" \
+        --num-workers "$NUM_WORKERS" \
+        --prompt-path benchmarks/swebench/prompts/default_install.j2 \
+        --n-limit "$N_LIMIT"
+    run_eval "$INSTALL_OUT"
+fi
 
 # run with prompting a subagent to fuzz the target function
-# uv run swebench-infer "$LLM_CONFIG" \
-#     --dataset "$DATASET_NAME" \
-#     --select "$INSTANCES_FILE" \
-#     --workspace docker \
-#     --output-dir "./evaluation_results/eval_outputs_subfuzz/${INSTANCES_SUBDIR}" \
-#     --max-attempts 3 \
-#     --max-iterations 200 \
-#     --max-retries 1 \
-#     --num-workers 5 \
-#     --prompt-path benchmarks/swebench/prompts/subagent_hypo.j2 \
-#     --n-limit 100
-# # # 格式: ./batch_verify.sh <output.jsonl 路径>
-# uv run swebench-eval "./evaluation_results/eval_outputs_subfuzz/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/output.jsonl" \
-#   --dataset "$DATASET_NAME" \
-#   --output-file "./evaluation_results/eval_outputs_subfuzz/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/results.swebench.jsonl" \
-#   --workers 5
+if [[ "$RUN_SUBAGENT_FUZZ" == "1" ]]; then
+    uv run swebench-infer "$LLM_CONFIG" \
+        --dataset "$DATASET_NAME" \
+        --select "$INSTANCES_FILE" \
+        --workspace docker \
+        --output-dir "$SUBFUZZ_OUT" \
+        --max-attempts "$MAX_ATTEMPTS" \
+        --max-iterations "$MAX_ITERATIONS" \
+        --max-retries "$MAX_RETRIES" \
+        --num-workers "$NUM_WORKERS" \
+        --prompt-path benchmarks/swebench/prompts/subagent_hypo.j2 \
+        --n-limit "$N_LIMIT"
+    run_eval "$SUBFUZZ_OUT"
 
-# --- 新增：自动运行盲测验证 ---
-# echo ">>> 开始自动盲测验证生成的补丁..."
-# OUTPUT_JSONL="./evaluation_results/eval_outputs_subfuzz/${INSTANCES_SUBDIR}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/output.jsonl"
-
-# if [[ -f "$OUTPUT_JSONL" ]]; then
-#     ./batch_verify.sh "$OUTPUT_JSONL" \
-#         --num-workers 5 \
-#         --extra-tools fuzz_hypo \
-#         --select "$INSTANCES_FILE" \
-#         --n-limit 10
-# else
-#     echo "跳过验证：找不到输出文件 $OUTPUT_JSONL"
-# fi
+    # --- 自动运行盲测验证（可选） ---
+    # OUTPUT_JSONL="${SUBFUZZ_OUT}/${DATASET_PATH}/${MODEL_PATH_SUFFIX}/output.jsonl"
+    # if [[ -f "$OUTPUT_JSONL" ]]; then
+    #     ./batch_verify.sh "$OUTPUT_JSONL" \
+    #         --num-workers "$NUM_WORKERS" \
+    #         --extra-tools fuzz_hypo \
+    #         --select "$INSTANCES_FILE" \
+    #         --n-limit 10
+    # else
+    #     echo "跳过验证：找不到输出文件 $OUTPUT_JSONL"
+    # fi
+fi
