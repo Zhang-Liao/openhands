@@ -6,8 +6,8 @@ export ALL_PROXY="socks5://127.0.0.1:7897/"
 export all_proxy="socks5://127.0.0.1:7897/"
 
 # 默认值
-DATASET_NAME="princeton-nlp/SWE-bench_Verified"
-SPLIT="test"
+INSTANCES_FILE="instance_for_fuzz1.txt"
+LLM_CONFIG=".llm_config/openrouter.json"
 BUILD_ONLY=0
 
 # 默认 instances 文件优先级：
