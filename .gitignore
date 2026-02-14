@@ -219,3 +219,5 @@ workspace/
 eval_outputs/
 evaluation_results/
 builds/
+eval_outputs_*/*
+swebench_dev_markdown/
