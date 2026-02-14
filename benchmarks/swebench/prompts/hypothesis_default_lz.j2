@@ -1,28 +1,82 @@
-## 什么时候需要 fuzz / PBT（Hypothesis）
+I have access to a python code repository in the directory {{ instance.repo_path }} . You can explore and modify files using the available tools. Consider the following issue description:
 
-只有当你能写出**通用 oracle**（不依赖隐藏测试、也不依赖深领域知识的可验证性质）时，fuzz / PBT 才值得做。优先选择 fuzz / PBT 的题型：
+<issue_description>
+{{ instance.problem_statement }}
+</issue_description>
 
-- **Round-trip / 可逆性**：`write→read`、`encode→decode`、`dump→load`、`parse→format→parse`、`serialize→deserialize` 应保持语义不变。
-- **差分测试（Differential testing）**：存在可信参考实现/等价实现可对照（例如 NumPy/SciPy、一个更简单但正确的实现、或规范算法）。
-- **代数/结构不变量**：幂等、交换/结合、单调性、长度/shape/排序不变量、边界不崩溃等。
-- **Parser/IO 鲁棒性**：异常输入、奇怪分隔符、NUL 字节、空白/编码差异、极端大小等。
+Can you help me implement the necessary changes to the repository so that the requirements specified in the <issue_description> are met?
+I've already taken care of all changes to any of the test files described in the <issue_description>. This means you DON'T have to modify the testing logic or any of the tests in any way!
+Also the development Python environment is already set up for you (i.e., all dependencies already installed), so you don't need to install other packages.
+Your task is to make the minimal changes to non-test files in the {{ instance.repo_path }} directory to ensure the <issue_description> is satisfied.
 
-不建议用（或只做很小规模的）fuzz / PBT 的题型：
+Follow these phases to resolve the issue:
 
-- **测试特异性强**：精确匹配错误信息/格式文本、严格绑定内部实现细节。
-- **oracle 需要深框架语义**：你无法在没有隐藏测试的情况下可靠判断对错。
-- **集成/依赖/环境问题为主**：修复点不在纯函数/算法/解析逻辑上。
+Phase 1. READING: read the problem and reword it in clearer terms
+   1.1 If there are code or config snippets. Express in words any best practices or conventions in them.
+   1.2 Hightlight message errors, method names, variables, file names, stack traces, and technical details.
+   1.3 Explain the problem in clear terms.
+   1.4 Enumerate the steps to reproduce the problem.
+   1.5 Hightlight any best practices to take into account when testing and fixing the issue
 
-来自 `swebench_dev_markdown/` 的典型例子（适合 fuzz / PBT）：
+Phase 2. RUNNING: install and run the tests on the repository
+   2.1 Activate the environment by running  
+       source /opt/miniconda3/etc/profile.d/conda.sh ; conda activate testbed
+   2.2 Install the package in development mode to ensure your changes are reflected:
+       cd {{ instance.repo_path }} && pip install -e . --no-deps
+       This is CRITICAL: Python imports use the installed package, not the source files directly.
+       Without this step, your code changes will NOT be visible when running tests or importing the module.
+   2.3 Follow the readme
+   2.4 Install the environment and anything needed
+   2.5 Iterate and figure out how to run the tests
 
-- `marshmallow-code__marshmallow-1252`（Datetime 解析边界）：ISO8601 结尾 `Z`、不同小数秒位数等。  
-  - **策略**：生成 ISO8601-like 字符串（可选时区 `Z` / `±hh:mm` / `±hhmm` / `±hh`，可变小数秒长度）。  
-  - **Oracle**：合法字符串必须能 parse；parse 后的 datetime 组件应与期望一致（或满足 round-trip）。
+Phase 3. EXPLORATION: find the files that are related to the problem and possible solutions
+   3.1 Use `grep` to search for relevant methods, classes, keywords and error messages.
+   3.2 Identify all files related to the problem statement.
+   3.3 Propose the methods and files to fix the issue and explain why.
+   3.4 From the possible file locations, select the most likely location to fix the issue.
 
-- `pvlib__pvlib-python-1026`（文件/解析鲁棒性）：`read_crn` 遇到 `\x00` NUL 序列、字段不规整时不应崩。  
-  - **策略**：生成 CRN-like fixed-width 行，随机注入 NUL run / float-like token / 异常空白。  
-  - **Oracle**：解析不崩溃；坏行被一致地丢弃或置为 NaN；其余行保持可用。
+Phase 4. TEST CREATION: before implementing any fix, decide the test approach and create a repro/test case.
+   4.1 Use the **test judge tool** (`test_strategy_decider`) to decide which approach to take:
+       - fuzz (Hypothesis/property-based)
+       - assertion (deterministic regression test with explicit assertions)
+       - simple_test (minimal reproduction with 1-5 hand-picked cases)
+       Provide the issue description plus any discovered reproduction steps, suspected files, stack traces, and constraints.
+   4.2 Based on the decision, use the appropriate tool/workflow to create the repro/test case:
+       - If decision == fuzz: use `fuzz_hypo` (or `fuzz_hypo_v2` / `fuzz_hypo_agent` if enabled) to generate a
+         property-based test harness using a general oracle/invariant, and include at least one deterministic
+         example (seed) if you already have a known failing case.
+       - If decision == assertion: follow the repository’s existing test conventions and add a deterministic test
+         with explicit assertions (`==`, `pytest.raises`, `pytest.warns`, etc.) that fails before the fix and passes after.
+       - If decision == simple_test: write a minimal standalone reproduction script/test (1-5 cases) that fails
+         before the fix and passes after; once the oracle/spec is clearer, consider promoting it to assertion or fuzz.
+   4.3 Look at existing test files in the repository to understand the test format/structure.
+   4.4 Create the minimal reproduction script/test case that reproduces the located issue.
+   4.5 Run it to confirm you are reproducing the issue, then adjust as necessary.
 
-- `pydicom__pydicom-1416`（数值不变量）：`np.arange` 的非整数步长会导致长度不一致。  
-  - **策略**：生成 `(y0, y1, length)` 组合覆盖浮点步长场景。  
-  - **Oracle**：输出 LUT **长度必须精确满足约束**，并保持数值落在合理范围内。
+Phase 5. FIX ANALYSIS: state clearly the problem and how to fix it
+   5.1 State clearly what the problem is.
+   5.2 State clearly where the problem is located.
+   5.3 State clearly how the test reproduces the issue.
+   5.4 State clearly the best practices to take into account in the fix.
+   5.5 State clearly how to fix the problem.
+
+Phase 6. FIX IMPLEMENTATION: Edit the source code to implement your chosen solution.
+   6.1 Make minimal, focused changes to fix the issue.
+   6.2 IMPORTANT: After making code changes, reinstall the package to apply your modifications:
+       cd {{ instance.repo_path }} && pip install -e . --no-deps
+       This ensures Python imports your modified code instead of the old cached version.
+
+Phase 7. VERIFICATION: Test your implementation thoroughly.
+   7.1 Run your reproduction script to verify the fix works.
+   7.2 Add edge cases to your test script to ensure comprehensive coverage.
+   7.3 Run existing tests related to the modified code to ensure you haven't broken anything.
+
+8. FINAL REVIEW: Carefully re-read the problem description and compare your changes with the base commit {{ instance.base_commit }}.
+   8.1 Ensure you've fully addressed all requirements.
+   8.2 Run any tests in the repository related to:
+     8.2.1 The issue you are fixing
+     8.2.2 The files you modified
+     8.2.3 The functions you changed
+   8.3 If any tests fail, revise your implementation until all tests pass
+
+Be thorough in your exploration, testing, and reasoning. It's fine if your thinking process is lengthy - quality and completeness are more important than brevity.
