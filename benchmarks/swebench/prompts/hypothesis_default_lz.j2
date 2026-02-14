@@ -1,0 +1,28 @@
+## 什么时候需要 fuzz / PBT（Hypothesis）
+
+只有当你能写出**通用 oracle**（不依赖隐藏测试、也不依赖深领域知识的可验证性质）时，fuzz / PBT 才值得做。优先选择 fuzz / PBT 的题型：
+
+- **Round-trip / 可逆性**：`write→read`、`encode→decode`、`dump→load`、`parse→format→parse`、`serialize→deserialize` 应保持语义不变。
+- **差分测试（Differential testing）**：存在可信参考实现/等价实现可对照（例如 NumPy/SciPy、一个更简单但正确的实现、或规范算法）。
+- **代数/结构不变量**：幂等、交换/结合、单调性、长度/shape/排序不变量、边界不崩溃等。
+- **Parser/IO 鲁棒性**：异常输入、奇怪分隔符、NUL 字节、空白/编码差异、极端大小等。
+
+不建议用（或只做很小规模的）fuzz / PBT 的题型：
+
+- **测试特异性强**：精确匹配错误信息/格式文本、严格绑定内部实现细节。
+- **oracle 需要深框架语义**：你无法在没有隐藏测试的情况下可靠判断对错。
+- **集成/依赖/环境问题为主**：修复点不在纯函数/算法/解析逻辑上。
+
+来自 `swebench_dev_markdown/` 的典型例子（适合 fuzz / PBT）：
+
+- `marshmallow-code__marshmallow-1252`（Datetime 解析边界）：ISO8601 结尾 `Z`、不同小数秒位数等。  
+  - **策略**：生成 ISO8601-like 字符串（可选时区 `Z` / `±hh:mm` / `±hhmm` / `±hh`，可变小数秒长度）。  
+  - **Oracle**：合法字符串必须能 parse；parse 后的 datetime 组件应与期望一致（或满足 round-trip）。
+
+- `pvlib__pvlib-python-1026`（文件/解析鲁棒性）：`read_crn` 遇到 `\x00` NUL 序列、字段不规整时不应崩。  
+  - **策略**：生成 CRN-like fixed-width 行，随机注入 NUL run / float-like token / 异常空白。  
+  - **Oracle**：解析不崩溃；坏行被一致地丢弃或置为 NaN；其余行保持可用。
+
+- `pydicom__pydicom-1416`（数值不变量）：`np.arange` 的非整数步长会导致长度不一致。  
+  - **策略**：生成 `(y0, y1, length)` 组合覆盖浮点步长场景。  
+  - **Oracle**：输出 LUT **长度必须精确满足约束**，并保持数值落在合理范围内。
