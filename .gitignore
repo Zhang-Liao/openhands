@@ -50,6 +50,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+.fuzz_hypo/
 
 # Translations
 *.mo

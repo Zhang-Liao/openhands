@@ -49,6 +49,11 @@ Phase 4. TEST CREATION: before implementing any fix, decide the test approach an
          with explicit assertions (`==`, `pytest.raises`, `pytest.warns`, etc.) that fails before the fix and passes after.
        - If decision == simple_test: write a minimal standalone reproduction script/test (1-5 cases) that fails
          before the fix and passes after; once the oracle/spec is clearer, consider promoting it to assertion or fuzz.
+   4.2.1 SWE-bench safety: avoid committing scratch tests.
+       - The final patch is evaluated by running the official test suite; do NOT leave temporary repro/wrapper files
+         in the git patch.
+       - Put any scratch files under an ignored directory (recommended: `.openhands/` or `.fuzz_hypo/`) or run ad-hoc
+         snippets via the terminal without creating tracked files.
    4.3 Look at existing test files in the repository to understand the test format/structure.
    4.4 Create the minimal reproduction script/test case that reproduces the located issue.
    4.5 Run it to confirm you are reproducing the issue, then adjust as necessary.
