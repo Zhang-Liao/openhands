@@ -81,6 +81,7 @@ def get_parser(add_llm_config: bool = True) -> argparse.ArgumentParser:
         nargs="+",
         default=[],
         help="List of extra tool names to enable (e.g., --extra-tools fuzz_hypo fuzz_hypo_v2). "
-             "Available: fuzz_hypo, fuzz_hypo_agent, fuzz_hypo_v2",
+             "Available: fuzz_hypo, fuzz_hypo_agent, fuzz_hypo_v2, subagent, "
+             "test_strategy_decider, assertion_test, simple_test",
     )
     return parser
